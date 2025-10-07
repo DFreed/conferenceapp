@@ -32,6 +32,8 @@ with st.sidebar:
     # CSV-only flow; API keys optional/unused if you don't have them
     ZOOMINFO_API_KEY = st.text_input("ZoomInfo API Key (optional)", type="password")
     NEWSAPI_KEY = st.text_input("NewsAPI Key (optional)", type="password")
+    APOLLO_API_KEY = st.text_input("Apollo API Key (for bulk email enrichment)", type="password",
+                                   help="Header: Authorization: Bearer <token>")
     st.divider()
     st.subheader("Local LLM (free via Ollama)")
     USE_OLLAMA = st.checkbox("Use local LLM for intent & role classification", value=True,
@@ -109,7 +111,106 @@ This tool ingests your attendee list and ranks contacts against your query.
 def clean_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    
+    # Map common column variations to standard names
+    column_mapping = {
+        "employer_(parsed)": "company",
+        "employer_parsed": "company",
+        "employer": "company",
+        "organization": "company",
+        "org": "company",
+        "firm": "company",
+        "business": "company"
+    }
+    
+    # Rename columns if they exist
+    mapped_columns = []
+    for old_name, new_name in column_mapping.items():
+        if old_name in df.columns and new_name not in df.columns:
+            df = df.rename(columns={old_name: new_name})
+            mapped_columns.append(f"{old_name} → {new_name}")
+    
+    # Store mapping info for display
+    if mapped_columns:
+        df.attrs['column_mappings'] = mapped_columns
+    
     return df
+
+def _split_name_full(name: str) -> Dict[str, str]:
+    """
+    Split a full name into first_name / last_name.
+    Rules:
+      - If a comma exists: 'Last, First Middle Suffix' → last from left, first from right
+      - Else: 'First Middle Last' (support particles like 'de', 'de la', 'van', 'von', etc.)
+      - Strip prefixes (Dr., Mr., Ms., Prof.) and suffixes (Jr., Sr., II/III/IV, PhD, PE, MBA)
+      - Preserve hyphenated and multi-word last names
+    """
+    if not isinstance(name, str):
+        return {"first_name": "", "last_name": ""}
+    n = " ".join(name.replace("\u00A0", " ").split())  # normalize spaces
+    if not n:
+        return {"first_name": "", "last_name": ""}
+
+    prefixes = {"dr", "mr", "mrs", "ms", "mx", "prof"}
+    suffixes = {"jr", "sr", "ii", "iii", "iv", "v", "phd", "pe", "mba", "esq"}
+    # multi-word particles should be checked first (ordered by length desc)
+    multi_particles = [("de la",), ("del",), ("van der",), ("van de",), ("von der",)]
+    particles = {"da","de","di","du","dos","das","van","von","bin","al","la","le","st.","saint"}
+
+    def _strip_prefix_suffix(tokens: list) -> list:
+        toks = [t.strip(".").lower() for t in tokens]
+        # strip prefix
+        if toks and toks[0] in prefixes:
+            tokens = tokens[1:]
+            toks = toks[1:]
+        # strip suffix (may be multiple)
+        while toks and toks[-1].strip(".").lower() in suffixes:
+            tokens = tokens[:-1]
+            toks = toks[:-1]
+        return tokens
+
+    # Case 1: "Last, First Middle Suffix"
+    if "," in n:
+        left, right = [x.strip() for x in n.split(",", 1)]
+        left_tokens = _strip_prefix_suffix(left.split())
+        right_tokens = _strip_prefix_suffix(right.split())
+        last_tokens = left_tokens if left_tokens else []
+        first_tokens = right_tokens if right_tokens else []
+        first = first_tokens[0] if first_tokens else ""
+        last = " ".join(last_tokens) if last_tokens else ""
+        return {"first_name": first, "last_name": last}
+
+    # Case 2: "First Middle Last" with particles
+    tokens = _strip_prefix_suffix(n.split())
+    if not tokens:
+        return {"first_name": "", "last_name": ""}
+    if len(tokens) == 1:
+        return {"first_name": tokens[0], "last_name": ""}
+
+    # Build last name from right, capturing particles
+    # Start with last token, then include preceding particle(s) or multi-word sequences.
+    t_lower = [t.lower() for t in tokens]
+    i_last = len(tokens) - 1
+    last_start = i_last
+
+    # Check multi-word particles (e.g., 'de la', 'van der')
+    joined = " ".join(t_lower)
+    for (mp,) in multi_particles:
+        if joined.endswith(" " + mp + " " + t_lower[-1]) or joined.endswith(mp + " " + t_lower[-1]):
+            mp_len = len(mp.split())
+            last_start = max(0, i_last - mp_len)
+            break
+
+    # Include single-word particles immediately before last name
+    while last_start - 1 >= 0 and t_lower[last_start - 1] in particles:
+        last_start -= 1
+
+    last_tokens = tokens[last_start:]
+    first_tokens = tokens[:last_start]
+    # First name is the first of the remaining tokens
+    first = first_tokens[0] if first_tokens else ""
+    last = " ".join(last_tokens)
+    return {"first_name": first, "last_name": last}
 
 def full_name(row: pd.Series) -> str:
     fn = row.get("first_name", "") or ""
@@ -174,7 +275,7 @@ def _ollama_chat(messages: List[Dict[str,str]], model: str, options: Dict[str,An
                     "num_ctx": 256,    # Smaller context window
                 }
             },
-            timeout=15,  # Shorter timeout
+            timeout=30,  # Longer timeout for email generation
         )
         
         print(f"DEBUG: Response status: {r.status_code}")
@@ -344,6 +445,126 @@ def enrich_with_zoominfo(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
 
     return df
 
+# Apollo.io — Bulk People Enrichment (name/title[/company] -> email only)
+# Docs: POST https://api.apollo.io/api/v1/people/bulk_match (up to 10 per call)
+# - Uses details[] array; more info improves match rate
+# - By default, personal emails/phones are not returned (we do not request phones)
+# - Consumes credits; bulk per-minute rate ≈ 50% of single endpoint
+
+def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_personal_emails: bool = False) -> pd.DataFrame:
+    if not api_key or df.empty:
+        return df
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    df = df.copy()
+    # work on rows missing email
+    need_idx = df.index[df["email"].isna() | (df["email"].astype(str).str.strip() == "")].tolist()
+    if not need_idx:
+        return df
+
+    # Build payloads in batches of 10
+    BATCH = 10
+    enriched_ct = 0
+    skipped_ct = 0
+    phase = st.empty()
+    bar = st.progress(0, text="Apollo bulk enrichment starting…")
+    total_batches = (len(need_idx) + BATCH - 1) // BATCH
+    for bi, start in enumerate(range(0, len(need_idx), BATCH), start=1):
+        batch_idx = need_idx[start:start+BATCH]
+        details = []
+        row_map = []  # keep mapping to write results back
+        for ridx in batch_idx:
+            r = df.loc[ridx]
+            # Prefer a full name if present; else build from first/last
+            full_name = (str(r.get("first_name") or "").strip() + " " + str(r.get("last_name") or "").strip()).strip()
+            if not full_name and "name" in df.columns:
+                full_name = str(r.get("name") or "").strip()
+            title = str(r.get("title") or "").strip()
+            company = str(r.get("company") or "").strip()
+            # Require at least a name OR (first+last)
+            if not full_name:
+                skipped_ct += 1
+                continue
+            item = {"name": full_name}
+            if title:
+                item["title"] = title
+            if company:
+                # Including company helps matching even though user asked name+title;
+                # if you prefer strictly name+title, comment this line out.
+                item["organization_name"] = company
+            details.append(item)
+            row_map.append(ridx)
+        if not details:
+            continue
+
+        payload = {
+            "details": details,
+            # We want email only; phones remain default (False). Personal emails optional:
+            "reveal_personal_emails": bool(reveal_personal_emails),
+            # You can also pass "reveal_phone_number": False (default)
+        }
+        try:
+            resp = requests.post(
+                "https://api.apollo.io/api/v1/people/bulk_match",
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                # simple backoff and retry once
+                time.sleep(2.0)
+                resp = requests.post(
+                    "https://api.apollo.io/api/v1/people/bulk_match",
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                )
+            resp.raise_for_status()
+            data = resp.json() if resp.content else {}
+            # Response shape may include matches under a field like "matches" or "people".
+            # We try common keys defensively:
+            results = None
+            for key in ["matches", "people", "enrichments", "data"]:
+                if isinstance(data.get(key), list):
+                    results = data[key]
+                    break
+            if not isinstance(results, list):
+                results = []
+
+            # Map each returned item to the corresponding row by order
+            for i, item in enumerate(results):
+                if i >= len(row_map):
+                    break
+                ridx = row_map[i]
+                # Try common email fields (prefer work/professional email)
+                email = (
+                    item.get("email") or
+                    item.get("work_email") or
+                    item.get("professional_email") or
+                    (item.get("emails")[0] if isinstance(item.get("emails"), list) and item["emails"] else None) or
+                    None
+                )
+                if email and str(email).strip():
+                    df.at[ridx, "email"] = str(email).strip()
+                    enriched_ct += 1
+        except Exception as e:
+            # continue to next batch on any error
+            pass
+
+        pct = int(100 * bi / max(1, total_batches))
+        bar.progress(min(pct, 100), text=f"Apollo enrichment: batch {bi}/{total_batches}")
+        phase.markdown(f"Enriched emails so far: **{enriched_ct}** · skipped (no name): **{skipped_ct}**")
+
+        # polite pacing to respect rate limits (bulk is throttled vs single endpoint)
+        time.sleep(0.3)
+
+    phase.markdown(f"**Apollo bulk enrichment complete.** New emails: **{enriched_ct}** · Skipped: **{skipped_ct}**")
+    bar.progress(100, text="Apollo enrichment done")
+    return df
+
 def fetch_recent_mentions(name: str, company: str, newsapi_key: str, lookback_days: int = 30) -> List[str]:
     """Use NewsAPI (or similar) to find recent public mentions of a person/company."""
     if not newsapi_key:
@@ -486,6 +707,149 @@ def row_text_all(r: pd.Series) -> str:
         v = str(r.get(k,"") or "")
         if v: bits.append(v)
     return " | ".join(bits)
+
+# ---------------------------
+# Email draft generation (template + optional LLM rewrite)
+# ---------------------------
+
+class _DefaultDict(dict):
+    # allows {missing} placeholders to become "" instead of KeyError
+    def __missing__(self, key): return ""
+
+def _clean_text(text: str) -> str:
+    """Clean up common encoding issues and funny characters"""
+    if not text:
+        return ""
+    
+    # Simple approach: just return the text as-is for now
+    # The LLM will handle character cleaning in the prompt
+    return text
+
+def _render_template_row(row: pd.Series, template: str, user_query: str) -> str:
+    data = {
+        "first_name": _clean_text(str(row.get("first_name","") or "")),
+        "last_name": _clean_text(str(row.get("last_name","") or "")),
+        "name": _clean_text((str(row.get("first_name","") or "") + " " + str(row.get("last_name","") or "")).strip() or str(row.get("name","") or "")),
+        "title": _clean_text(str(row.get("title","") or "")),
+        "company": _clean_text(str(row.get("company","") or "")),
+        "email": _clean_text(str(row.get("email","") or "")),
+        "linkedin_url": _clean_text(str(row.get("linkedin_url","") or "")),
+        "recent_mentions": _clean_text(str(row.get("recent_mentions","") or "")),
+        "query": _clean_text(str(user_query or "")),
+    }
+    # Basic helpful extras
+    if not data["first_name"] and data["name"]:
+        data["first_name"] = data["name"].split(" ")[0]
+    return template.format_map(_DefaultDict(data))
+
+def _ollama_rewrite_email_batch(drafts: List[Dict[str,str]], model: str, style: str = "concise") -> List[str]:
+    """
+    drafts: [{ 'draft': <text>, 'first_name':..., 'title':..., 'company':..., 'recent_mentions':..., 'linkedin_url':... }, ...]
+    Returns: list of rewritten emails aligned to input order.
+    """
+    # Keep prompt tight; ask for plain email text.
+    style_hint = "Keep to ~120 words, specific and respectful, non-salesy, one clear ask."
+    if style == "brief": style_hint = "Keep to ~80 words, specific, non-salesy, one clear ask."
+    if style == "detailed": style_hint = "Up to ~160 words, still focused, one clear ask."
+
+    # Build one chat with all items; return a JSON array of strings.
+    lines = []
+    for i, d in enumerate(drafts):
+        # compact JSON-ish line to reduce tokens
+        lines.append(json.dumps({
+            "i": i,
+            "first_name": d.get("first_name",""),
+            "title": d.get("title",""),
+            "company": d.get("company",""),
+            "linkedin_url": d.get("linkedin_url",""),
+            "recent_mentions": d.get("recent_mentions","")[:800],  # cap
+            "draft": d.get("draft","")[:1200],  # cap
+        }, ensure_ascii=False))
+
+    sys = (
+        "You refine cold outreach emails to utility/industrial buyers. "
+        "Rewrite each draft with the given context (title, company, LinkedIn URL, recent mentions). "
+        "Use a professional, non-salesy tone suited to engineers/procurement. "
+        f"{style_hint} If there's no subject line, add a short subject like 'High-voltage equipment for [company name]'. "
+        "IMPORTANT: Remove any duplicate phrases or repetitive content. Clean up any funny characters like â€, â€™, â€œ, â€, etc. from titles and text. "
+        "Replace them with proper punctuation (', ", ", -, etc.). Ensure the final email is clean and professional. "
+        "Output STRICT JSON array of strings, each the final email body (subject line on first line like 'Subject: ...')."
+    )
+    user = "ITEMS:\n" + "\n".join(lines)
+    out = _ollama_chat(
+        [{"role":"system","content":sys},{"role":"user","content":user}],
+        model=model,
+        options={"num_predict": 128}
+    )
+    try:
+        arr = json.loads(out)
+        if isinstance(arr, list) and all(isinstance(x, str) for x in arr):
+            return arr
+    except Exception:
+        pass
+    # Fallback to originals on parse failure
+    return [d["draft"] for d in drafts]
+
+def generate_email_drafts(df: pd.DataFrame, template: str, user_query: str,
+                          use_ollama: bool, ollama_model: str, style: str = "concise",
+                          batch_size: int = 10) -> pd.DataFrame:
+    """
+    Adds 'email_draft' column. First renders the user template per row, then optionally rewrites via Ollama in batches.
+    """
+    if df.empty or not template.strip():
+        return df
+    df = df.copy()
+    
+    # Step 1: render base drafts
+    base = []
+    for _, r in df.iterrows():
+        base.append(_render_template_row(r, template, user_query))
+    df["email_draft"] = base
+
+    # Step 2: optional LLM rewrite
+    if not use_ollama:
+        return df
+
+    phase = st.empty()
+    bar = st.progress(0, text="Rewriting email drafts with local LLM…")
+    items = []
+    for _, r in df.iterrows():
+        items.append({
+            "draft": r["email_draft"],
+            "first_name": _clean_text(str(r.get("first_name","") or "")),
+            "title": _clean_text(str(r.get("title","") or "")),
+            "company": _clean_text(str(r.get("company","") or "")),
+            "linkedin_url": _clean_text(str(r.get("linkedin_url","") or "")),
+            "recent_mentions": _clean_text(str(r.get("recent_mentions","") or "")),
+        })
+    
+    out_texts = []
+    total = len(items)
+    done = 0
+    
+    for start in range(0, total, batch_size):
+        chunk = items[start:start+batch_size]
+        try:
+            outs = _ollama_rewrite_email_batch(chunk, ollama_model, style=style)
+            out_texts.extend(outs)
+        except Exception as e:
+            st.warning(f"⚠️ LLM rewrite failed for batch {start//batch_size + 1}: {str(e)[:100]}...")
+            # Fallback to original drafts for this batch
+            out_texts.extend([item["draft"] for item in chunk])
+        
+        done += len(chunk)
+        pct = min(100, int(100 * done / max(1, total)))
+        bar.progress(pct)
+        phase.markdown(f"📧 Rewrote {done}/{total} drafts ({pct}%)")
+        
+        # Small delay to prevent overwhelming the LLM
+        if done < total:
+            time.sleep(0.5)
+    
+    df["email_draft"] = out_texts[:len(df)]
+    bar.progress(100, text="✅ Email drafts ready")
+    phase.markdown(f"✅ Generated {len(out_texts)} email drafts")
+    return df
 
 def negation_aware_rank(df: pd.DataFrame, user_query: str, use_ollama: bool, ollama_model: str) -> pd.DataFrame:
     df = df.copy()
@@ -648,10 +1012,38 @@ if csv_file is not None:
         csv_file.seek(0)
         data_df = pd.read_csv(csv_file, encoding="latin-1")
     data_df = clean_cols(data_df)
+    
+    # Show column mappings if any
+    if hasattr(data_df, 'attrs') and 'column_mappings' in data_df.attrs:
+        st.info(f"📋 Column mappings: {', '.join(data_df.attrs['column_mappings'])}")
+    
     # Ensure expected columns exist
     for col in ["first_name", "last_name", "company", "title", "email", "linkedin_url"]:
         if col not in data_df.columns:
             data_df[col] = None
+    
+    # If a 'name' column exists, auto-split into first/last where missing
+    if "name" in data_df.columns:
+        filled_ct = [0]  # Use list to make it mutable
+        
+        def _maybe_split(row):
+            fn = str(row.get("first_name") or "").strip()
+            ln = str(row.get("last_name") or "").strip()
+            full = str(row.get("name") or "").strip()
+            if full and (not fn or not ln):
+                parts = _split_name_full(full)
+                # only fill blanks; don't overwrite existing content
+                if not fn and parts["first_name"]:
+                    row["first_name"] = parts["first_name"]
+                    filled_ct[0] += 1
+                if not ln and parts["last_name"]:
+                    row["last_name"] = parts["last_name"]
+                    filled_ct[0] += 1
+            return row
+            
+        data_df = data_df.apply(_maybe_split, axis=1)
+        if filled_ct[0]:
+            st.info(f"Split 'name' into first/last for {filled_ct[0]} fields.")
     st.success(f"Loaded {len(data_df)} attendees.")
     st.dataframe(data_df.head(25), use_container_width=True)
 
@@ -663,41 +1055,179 @@ with colA:
 with colB:
     do_news_mentions = st.checkbox("Fetch recent mentions (NewsAPI)", value=False, help="Looks for person+company mentions in public news.")
 
-if st.button("Run Enrichment"):
+colC, colD = st.columns(2)
+with colC:
+    do_apollo = st.checkbox("Apollo: Bulk People Enrichment (fill missing emails only)", value=False,
+                            help="Sends name/title[/company] in batches of 10; writes back email. Consumes Apollo credits.")
+with colD:
+    apollo_personal = st.checkbox("Allow personal emails (Apollo)", value=False,
+                                  help="If enabled, sets reveal_personal_emails=true.")
+
+# Enrichment section with completion tracking
+enrichment_complete = st.session_state.get("enrichment_complete", False)
+
+if st.button("Run Enrichment", disabled=enrichment_complete):
     if data_df is None:
         st.warning("Please upload a CSV first.")
     else:
         df = data_df.copy()
+        enrichment_errors = []
+        enrichment_success = []
 
         if do_zoominfo:
             if not ZOOMINFO_API_KEY:
                 st.error("ZoomInfo API Key missing.")
+                enrichment_errors.append("ZoomInfo: Missing API key")
             else:
                 with st.spinner("Enriching via ZoomInfo…"):
-                    df = enrich_with_zoominfo(df, ZOOMINFO_API_KEY)
-                    st.success("ZoomInfo enrichment pass completed (see notes in code to map fields).")
+                    try:
+                        df = enrich_with_zoominfo(df, ZOOMINFO_API_KEY)
+                        enrichment_success.append("ZoomInfo: Enrichment completed")
+                        st.success("ZoomInfo enrichment pass completed (see notes in code to map fields).")
+                    except Exception as e:
+                        st.error(f"ZoomInfo enrichment failed: {str(e)}")
+                        enrichment_errors.append(f"ZoomInfo: {str(e)}")
 
         if do_news_mentions:
             if not NEWSAPI_KEY:
                 st.error("NewsAPI key missing.")
+                enrichment_errors.append("NewsAPI: Missing API key")
             else:
                 with st.spinner("Fetching recent public mentions…"):
-                    mentions_all = []
-                    for i, r in df.iterrows():
-                        nm = full_name(r)
-                        comp = str(r.get("company", "") or "")
-                        mentions = fetch_recent_mentions(nm, comp, NEWSAPI_KEY)
-                        # Merge Utility Dive RSS matches (placeholder returns [])
-                        mentions.extend(fetch_utility_dive(comp))
-                        mentions_all.append(" || ".join(mentions) if mentions else "")
-                    df["recent_mentions"] = mentions_all
-                    st.success("Mentions fetched.")
+                    try:
+                        mentions_all = []
+                        for i, r in df.iterrows():
+                            nm = full_name(r)
+                            comp = str(r.get("company", "") or "")
+                            mentions = fetch_recent_mentions(nm, comp, NEWSAPI_KEY)
+                            # Merge Utility Dive RSS matches (placeholder returns [])
+                            mentions.extend(fetch_utility_dive(comp))
+                            mentions_all.append(" || ".join(mentions) if mentions else "")
+                        df["recent_mentions"] = mentions_all
+                        enrichment_success.append("NewsAPI: Mentions fetched")
+                        st.success("Mentions fetched.")
+                    except Exception as e:
+                        st.error(f"NewsAPI enrichment failed: {str(e)}")
+                        enrichment_errors.append(f"NewsAPI: {str(e)}")
+
+        if do_apollo:
+            if not APOLLO_API_KEY:
+                st.error("Apollo API Key missing.")
+                enrichment_errors.append("Apollo: Missing API key")
+            else:
+                with st.spinner("Enriching emails via Apollo bulk…"):
+                    try:
+                        df_before = df.copy()
+                        df = enrich_emails_with_apollo_bulk(df, APOLLO_API_KEY, reveal_personal_emails=apollo_personal)
+                        
+                        # Check if any emails were actually enriched
+                        emails_before = df_before["email"].notna().sum()
+                        emails_after = df["email"].notna().sum()
+                        new_emails = emails_after - emails_before
+                        
+                        if new_emails > 0:
+                            enrichment_success.append(f"Apollo: {new_emails} new emails found")
+                            st.success(f"Apollo email enrichment completed. Found {new_emails} new emails.")
+                        else:
+                            st.warning("Apollo enrichment completed but no new emails were found.")
+                            st.info("**Possible reasons for no results:**")
+                            st.markdown("""
+                            - **Insufficient data**: Apollo needs at least name + title/company for matching
+                            - **No matches found**: The person may not be in Apollo's database
+                            - **API rate limits**: Try again in a few minutes
+                            - **Invalid API key**: Check your Apollo API key is correct and active
+                            - **Account limits**: Your Apollo plan may have reached its monthly limit
+                            - **Data quality**: Names/titles may need to be more specific or standardized
+                            """)
+                            enrichment_errors.append("Apollo: No new emails found")
+                    except Exception as e:
+                        st.error(f"Apollo enrichment failed: {str(e)}")
+                        enrichment_errors.append(f"Apollo: {str(e)}")
+                        st.info("**Common Apollo API issues:**")
+                        st.markdown("""
+                        - **401 Unauthorized**: Invalid or expired API key
+                        - **429 Too Many Requests**: Rate limit exceeded, wait and retry
+                        - **403 Forbidden**: Account suspended or insufficient credits
+                        - **400 Bad Request**: Invalid request format or missing required fields
+                        - **Network timeout**: Apollo servers may be slow, try smaller batches
+                        """)
+
+        # Store results and mark enrichment as complete
         st.session_state["df_enriched"] = df
+        st.session_state["enrichment_complete"] = True
+        st.session_state["enrichment_errors"] = enrichment_errors
+        st.session_state["enrichment_success"] = enrichment_success
+
+# Show enrichment status
+if enrichment_complete:
+    st.success("✅ Enrichment completed!")
+    
+    if st.session_state.get("enrichment_success"):
+        st.info(f"**Successful enrichments:** {', '.join(st.session_state['enrichment_success'])}")
+    
+    if st.session_state.get("enrichment_errors"):
+        st.warning(f"**Issues encountered:** {', '.join(st.session_state['enrichment_errors'])}")
+    
+    if st.button("Reset Enrichment", help="Clear enrichment results and allow re-running"):
+        st.session_state["enrichment_complete"] = False
+        st.session_state["enrichment_errors"] = []
+        st.session_state["enrichment_success"] = []
+        st.rerun()
 
 st.subheader("3) Prioritize by your query")
 user_query = st.text_input("Describe what you’re looking for (e.g., 'grid-scale storage, US Southeast utilities, hydrogen blending pilots')")
 
-if st.button("Rank & Export"):
+# Email draft options
+with st.expander("Optional: generate per-contact email drafts"):
+    MAKE_DRAFTS = st.checkbox("Add an email draft column to the CSV", value=False)
+    
+    if MAKE_DRAFTS:
+        MAX_EMAILS = st.number_input(
+            "Limit email generation to top N ranked contacts", 
+            min_value=1, 
+            max_value=1000, 
+            value=50,
+            help="Only generate emails for the top N highest-ranked contacts to save time and API costs"
+        )
+        
+        DEFAULT_TEMPLATE = (
+            "Subject: Exploring high-voltage equipment fit for {company}\n\n"
+            "Hi {first_name},\n\n"
+            "I work with industrial innovators enabling high-voltage reliability and safety. Given your role as {title} at {company}, "
+            "I thought this might be relevant. {recent_mentions}\n\n"
+            "If helpful, here's a short brief on how we support utilities/substations similar to yours. "
+            "Would you be open to a quick call next week?\n\n"
+            "Best,\n"
+            "[Your Name]\n"
+            "[Your Company]\n"
+            "[Your Contact Info]\n"
+            "{linkedin_url}\n"
+        )
+        EMAIL_TEMPLATE = st.text_area(
+            "Email template (use placeholders like {first_name}, {title}, {company}, {recent_mentions}, {linkedin_url}, {query})",
+            value=DEFAULT_TEMPLATE,
+            height=220,
+        )
+        USE_LLM_REWRITE = st.checkbox("Refine each draft with local LLM (Ollama)", value=True,
+                                      help="Uses your model choice in the sidebar to tailor tone and include relevant context.")
+        LLM_STYLE = st.selectbox("Refinement style", options=["brief","concise","detailed"], index=1)
+        DRAFT_BATCH = st.slider("Draft rewrite batch size", min_value=5, max_value=50, value=10, step=5,
+                               help="Smaller batches are more reliable and less likely to timeout")
+    else:
+        MAX_EMAILS = 0
+        EMAIL_TEMPLATE = ""
+        USE_LLM_REWRITE = False
+        LLM_STYLE = "concise"
+        DRAFT_BATCH = 10
+
+# Check if enrichment is required but not complete
+enrichment_required = do_zoominfo or do_news_mentions or do_apollo
+can_proceed = not enrichment_required or enrichment_complete
+
+if not can_proceed:
+    st.info("⏳ Please complete enrichment first before ranking and exporting.")
+
+if st.button("Rank & Export", disabled=not can_proceed):
     df_base = st.session_state.get("df_enriched", data_df)
     if df_base is None:
         st.warning("Please upload a CSV first.")
@@ -707,6 +1237,28 @@ if st.button("Rank & Export"):
         with st.spinner("Scoring (negation-aware)…"):
             ranked = negation_aware_rank(df_base, user_query, USE_OLLAMA, OLLAMA_MODEL)
             
+            # Optionally add email drafts (only for top N contacts)
+            if MAKE_DRAFTS and len(ranked) > 0:
+                # Limit to top N contacts for email generation
+                top_contacts = ranked.head(MAX_EMAILS)
+                st.info(f"📧 Generating emails for top {len(top_contacts)} contacts (out of {len(ranked)} total)")
+                
+                ranked_with_emails = generate_email_drafts(
+                    top_contacts, EMAIL_TEMPLATE, user_query,
+                    use_ollama=USE_LLM_REWRITE and USE_OLLAMA,
+                    ollama_model=OLLAMA_MODEL,
+                    style=LLM_STYLE,
+                    batch_size=DRAFT_BATCH
+                )
+                
+                # Merge back with the full ranked list
+                ranked = ranked.merge(
+                    ranked_with_emails[['email_draft']], 
+                    left_index=True, 
+                    right_index=True, 
+                    how='left'
+                )
+            
             if len(ranked) == 0:
                 st.warning("No results found after filtering. Try:")
                 st.markdown("- **Less restrictive query** (e.g., 'engineers' instead of 'high voltage transmission engineers')")
@@ -715,6 +1267,8 @@ if st.button("Rank & Export"):
             else:
                 cols = ["first_name","last_name","company","title","email","linkedin_url","recent_mentions",
                         "llm_role","score","base_score"]
+                if "email_draft" in ranked.columns:
+                    cols.append("email_draft")
                 for c in cols:
                     if c not in ranked.columns:
                         ranked[c] = None
@@ -724,4 +1278,9 @@ if st.button("Rank & Export"):
 
                 # Export
                 csv_bytes = out.to_csv(index=False).encode("utf-8")
-                st.download_button("Download prioritized CSV", data=csv_bytes, file_name="prioritized_contacts.csv", mime="text/csv")
+                st.download_button(
+                    "Download prioritized CSV",
+                    data=csv_bytes,
+                    file_name="prioritized_contacts.csv",
+                    mime="text/csv"
+                )
