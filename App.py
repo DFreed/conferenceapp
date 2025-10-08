@@ -22,6 +22,263 @@ from sklearn.metrics.pairwise import cosine_similarity
 # - Respect each provider’s ToS and rate limits; obtain necessary permissions.
 
 # ---------------------------
+# API Test Functions
+# ---------------------------
+
+def test_apollo_connection(api_key: str):
+    """Test Apollo API connection with a simple request"""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    # Test with a simple request
+    test_payload = {
+        "details": [
+            {
+                "name": "John Doe",
+                "title": "Software Engineer",
+                "organization_name": "Example Corp"
+            }
+        ],
+        "reveal_personal_emails": False
+    }
+    
+    try:
+        st.info("Testing Apollo API connection...")
+        resp = requests.post(
+            "https://api.apollo.io/api/v1/people/bulk_match",
+            headers=headers,
+            json=test_payload,
+            timeout=30,
+        )
+        
+        st.info(f"Apollo API Test: Status code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ Apollo API connection successful!")
+            st.json(data)
+        elif resp.status_code == 401:
+            st.error("❌ Apollo API: Unauthorized - Check your API key")
+        elif resp.status_code == 403:
+            st.error("❌ Apollo API: Forbidden - Check your account permissions")
+        elif resp.status_code == 429:
+            st.warning("⚠️ Apollo API: Rate limited - Try again later")
+        else:
+            st.error(f"❌ Apollo API: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Apollo API: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Apollo API: Unexpected error - {str(e)}")
+
+def test_newsapi_connection(api_key: str):
+    """Test NewsAPI connection with a simple request"""
+    try:
+        st.info("Testing NewsAPI connection...")
+        
+        # Test with a simple query
+        params = {
+            "q": "technology",
+            "language": "en",
+            "pageSize": 1,
+            "apiKey": api_key
+        }
+        url = f"https://newsapi.org/v2/everything?{urlencode(params)}"
+        
+        resp = requests.get(url, timeout=15)
+        st.info(f"NewsAPI Test: Status code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ NewsAPI connection successful!")
+            articles = data.get("articles", [])
+            st.info(f"Found {len(articles)} articles in test")
+            if articles:
+                st.json(articles[0])
+        elif resp.status_code == 401:
+            st.error("❌ NewsAPI: Unauthorized - Check your API key")
+        elif resp.status_code == 429:
+            st.warning("⚠️ NewsAPI: Rate limited - Try again later")
+        else:
+            st.error(f"❌ NewsAPI: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ NewsAPI: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ NewsAPI: Unexpected error - {str(e)}")
+
+def test_lusha_connection(api_key: str):
+    """Test Lusha API connection with a simple request"""
+    headers = {
+        "api_key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    # Test with a simple request using the bulk endpoint
+    test_payload = {
+        "contacts": [
+            {
+                "contactId": "1",
+                "fullName": "John Doe",
+                "email": "john@example.com",
+                "companies": [
+                    {
+                        "name": "Example Corp",
+                        "domain": "example.com",
+                        "isCurrent": True
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "revealEmails": True,
+            "revealPhones": True
+        }
+    }
+    
+    try:
+        st.info("Testing Lusha API connection...")
+        resp = requests.post(
+            "https://api.lusha.com/v2/person",
+            headers=headers,
+            json=test_payload,
+            timeout=30,
+        )
+        
+        st.info(f"Lusha API Test: Status code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ Lusha API connection successful!")
+            st.json(data)
+        elif resp.status_code == 401:
+            st.error("❌ Lusha API: Unauthorized - Check your API key")
+        elif resp.status_code == 403:
+            st.error("❌ Lusha API: Forbidden - Check your account permissions or plan")
+        elif resp.status_code == 429:
+            st.warning("⚠️ Lusha API: Rate limited - Try again later")
+        else:
+            st.error(f"❌ Lusha API: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Lusha API: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Lusha API: Unexpected error - {str(e)}")
+
+def test_apollo_with_examples():
+    """Test Apollo API with specific examples provided by user"""
+    api_key = "lfzgyWLZw6JLj4T18w0z5g"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    # Test with the two specific examples
+    test_payload = {
+        "details": [
+            {
+                "name": "Diane Barr",
+                "organization_name": "Camas"
+            },
+            {
+                "name": "James Barbis", 
+                "organization_name": "Geosyntec Consultants"
+            }
+        ],
+        "reveal_personal_emails": False
+    }
+    
+    try:
+        st.info("Testing Apollo API with specific examples...")
+        st.info(f"Request payload: {test_payload}")
+        
+        resp = requests.post(
+            "https://api.apollo.io/api/v1/people/bulk_match",
+            headers=headers,
+            json=test_payload,
+            timeout=30,
+        )
+        
+        st.info(f"Apollo API Test: Status code: {resp.status_code}")
+        st.info(f"Apollo API Test: Response headers: {dict(resp.headers)}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ Apollo API connection successful!")
+            st.info(f"Response type: {type(data)}")
+            st.info(f"Response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            st.json(data)
+            
+            # Try to extract emails
+            if isinstance(data, list):
+                for i, person in enumerate(data):
+                    st.info(f"Person {i+1}: {person}")
+                    email = person.get("email") or person.get("work_email") or person.get("primary_email")
+                    if email:
+                        st.success(f"Found email: {email}")
+                    else:
+                        st.warning("No email found")
+            elif isinstance(data, dict):
+                # Check for common response structures
+                for key in ["matches", "people", "enrichments", "data", "results"]:
+                    if key in data and isinstance(data[key], list):
+                        st.info(f"Found data under key '{key}': {len(data[key])} items")
+                        for i, person in enumerate(data[key]):
+                            st.info(f"Person {i+1}: {person}")
+                            email = person.get("email") or person.get("work_email") or person.get("primary_email")
+                            if email:
+                                st.success(f"Found email: {email}")
+                            else:
+                                st.warning("No email found")
+                        break
+                        
+        elif resp.status_code == 401:
+            st.error("❌ Apollo API: Unauthorized - Check your API key")
+            st.error("This usually means the API key is invalid or expired")
+        elif resp.status_code == 403:
+            st.error("❌ Apollo API: Forbidden - Check your account permissions")
+            st.error("This usually means your account doesn't have access to this endpoint")
+        elif resp.status_code == 429:
+            st.warning("⚠️ Apollo API: Rate limited - Try again later")
+        else:
+            st.error(f"❌ Apollo API: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:500]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Apollo API: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Apollo API: Unexpected error - {str(e)}")
+
+# ---------------------------
 # Config
 # ---------------------------
 st.set_page_config(page_title="Conference → Target List Prioritizer", layout="wide")
@@ -34,6 +291,39 @@ with st.sidebar:
     NEWSAPI_KEY = st.text_input("NewsAPI Key (optional)", type="password")
     APOLLO_API_KEY = st.text_input("Apollo API Key (for bulk email enrichment)", type="password",
                                    help="Header: Authorization: Bearer <token>")
+    LUSHA_API_KEY = st.text_input("Lusha API Key (for bulk contact enrichment)", type="password",
+                                  help="Header: api_key: <your_key>")
+    
+    # Lusha API limits
+    st.subheader("Lusha API Limits")
+    LUSHA_MAX_CONTACTS = st.number_input(
+        "Max contacts to enrich with Lusha", 
+        min_value=1, 
+        max_value=1000, 
+        value=100,
+        help="Limit the number of contacts sent to Lusha API to control costs and rate limits"
+    )
+    st.caption(f"💡 Lusha processes up to 100 contacts per batch. With {LUSHA_MAX_CONTACTS} contacts, you'll make {(LUSHA_MAX_CONTACTS + 99) // 100} API calls.")
+    
+    # Apollo API limits
+    APOLLO_MAX_CONTACTS = st.number_input(
+        "Max contacts to enrich with Apollo", 
+        min_value=1, 
+        max_value=1000, 
+        value=50,
+        help="Limit the number of contacts sent to Apollo API to control costs and rate limits"
+    )
+    st.caption(f"💡 Apollo processes up to 10 contacts per batch. With {APOLLO_MAX_CONTACTS} contacts, you'll make {(APOLLO_MAX_CONTACTS + 9) // 10} API calls.")
+    
+    # Cost estimation
+    if LUSHA_MAX_CONTACTS > 0 or APOLLO_MAX_CONTACTS > 0:
+        st.info("💰 **Estimated API Costs:**")
+        if LUSHA_MAX_CONTACTS > 0:
+            st.caption(f"• Lusha: ~{LUSHA_MAX_CONTACTS} credits (varies by plan)")
+        if APOLLO_MAX_CONTACTS > 0:
+            st.caption(f"• Apollo: ~{APOLLO_MAX_CONTACTS} credits (varies by plan)")
+        st.caption("💡 Check your API provider's pricing for exact costs")
+    
     st.divider()
     st.subheader("Local LLM (free via Ollama)")
     USE_OLLAMA = st.checkbox("Use local LLM for intent & role classification", value=True,
@@ -98,6 +388,36 @@ with st.sidebar:
             st.info("Make sure Ollama is running: `ollama serve`")
 
     st.caption("No credentials are stored server-side by this app. Restart clears them.")
+    
+    # Test API connections
+    st.subheader("Test API Connections")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Test Apollo API"):
+            if APOLLO_API_KEY:
+                test_apollo_connection(APOLLO_API_KEY)
+            else:
+                st.error("Please enter Apollo API key first")
+        
+        # Quick test with provided examples
+        if st.button("Test Apollo with Examples"):
+            test_apollo_with_examples()
+    
+    with col2:
+        if st.button("Test NewsAPI"):
+            if NEWSAPI_KEY:
+                test_newsapi_connection(NEWSAPI_KEY)
+            else:
+                st.error("Please enter NewsAPI key first")
+    
+    col3, col4 = st.columns(2)
+    with col3:
+        if st.button("Test Lusha API"):
+            if LUSHA_API_KEY:
+                test_lusha_connection(LUSHA_API_KEY)
+            else:
+                st.error("Please enter Lusha API key first")
 
 st.markdown("""
 This tool ingests your attendee list and ranks contacts against your query.
@@ -392,6 +712,263 @@ def llm_classify_role_ollama_batch(rows: List[Dict[str,str]], model: str) -> Lis
     return ["Other"] * len(rows)
 
 # ---------------------------
+# API Test Functions
+# ---------------------------
+
+def test_apollo_connection(api_key: str):
+    """Test Apollo API connection with a simple request"""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    # Test with a simple request
+    test_payload = {
+        "details": [
+            {
+                "name": "John Doe",
+                "title": "Software Engineer",
+                "organization_name": "Example Corp"
+            }
+        ],
+        "reveal_personal_emails": False
+    }
+    
+    try:
+        st.info("Testing Apollo API connection...")
+        resp = requests.post(
+            "https://api.apollo.io/api/v1/people/bulk_match",
+            headers=headers,
+            json=test_payload,
+            timeout=30,
+        )
+        
+        st.info(f"Apollo API Test: Status code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ Apollo API connection successful!")
+            st.json(data)
+        elif resp.status_code == 401:
+            st.error("❌ Apollo API: Unauthorized - Check your API key")
+        elif resp.status_code == 403:
+            st.error("❌ Apollo API: Forbidden - Check your account permissions")
+        elif resp.status_code == 429:
+            st.warning("⚠️ Apollo API: Rate limited - Try again later")
+        else:
+            st.error(f"❌ Apollo API: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Apollo API: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Apollo API: Unexpected error - {str(e)}")
+
+def test_newsapi_connection(api_key: str):
+    """Test NewsAPI connection with a simple request"""
+    try:
+        st.info("Testing NewsAPI connection...")
+        
+        # Test with a simple query
+        params = {
+            "q": "technology",
+            "language": "en",
+            "pageSize": 1,
+            "apiKey": api_key
+        }
+        url = f"https://newsapi.org/v2/everything?{urlencode(params)}"
+        
+        resp = requests.get(url, timeout=15)
+        st.info(f"NewsAPI Test: Status code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ NewsAPI connection successful!")
+            articles = data.get("articles", [])
+            st.info(f"Found {len(articles)} articles in test")
+            if articles:
+                st.json(articles[0])
+        elif resp.status_code == 401:
+            st.error("❌ NewsAPI: Unauthorized - Check your API key")
+        elif resp.status_code == 429:
+            st.warning("⚠️ NewsAPI: Rate limited - Try again later")
+        else:
+            st.error(f"❌ NewsAPI: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ NewsAPI: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ NewsAPI: Unexpected error - {str(e)}")
+
+def test_apollo_with_examples():
+    """Test Apollo API with specific examples provided by user"""
+    api_key = "lfzgyWLZw6JLj4T18w0z5g"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    # Test with the two specific examples
+    test_payload = {
+        "details": [
+            {
+                "name": "Diane Barr",
+                "organization_name": "Camas"
+            },
+            {
+                "name": "James Barbis", 
+                "organization_name": "Geosyntec Consultants"
+            }
+        ],
+        "reveal_personal_emails": False
+    }
+    
+    try:
+        st.info("Testing Apollo API with specific examples...")
+        st.info(f"Request payload: {test_payload}")
+        
+        resp = requests.post(
+            "https://api.apollo.io/api/v1/people/bulk_match",
+            headers=headers,
+            json=test_payload,
+            timeout=30,
+        )
+        
+        st.info(f"Apollo API Test: Status code: {resp.status_code}")
+        st.info(f"Apollo API Test: Response headers: {dict(resp.headers)}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ Apollo API connection successful!")
+            st.info(f"Response type: {type(data)}")
+            st.info(f"Response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            st.json(data)
+            
+            # Try to extract emails
+            if isinstance(data, list):
+                for i, person in enumerate(data):
+                    st.info(f"Person {i+1}: {person}")
+                    email = person.get("email") or person.get("work_email") or person.get("primary_email")
+                    if email:
+                        st.success(f"Found email: {email}")
+                    else:
+                        st.warning("No email found")
+            elif isinstance(data, dict):
+                # Check for common response structures
+                for key in ["matches", "people", "enrichments", "data", "results"]:
+                    if key in data and isinstance(data[key], list):
+                        st.info(f"Found data under key '{key}': {len(data[key])} items")
+                        for i, person in enumerate(data[key]):
+                            st.info(f"Person {i+1}: {person}")
+                            email = person.get("email") or person.get("work_email") or person.get("primary_email")
+                            if email:
+                                st.success(f"Found email: {email}")
+                            else:
+                                st.warning("No email found")
+                        break
+                        
+        elif resp.status_code == 401:
+            st.error("❌ Apollo API: Unauthorized - Check your API key")
+            st.error("This usually means the API key is invalid or expired")
+        elif resp.status_code == 403:
+            st.error("❌ Apollo API: Forbidden - Check your account permissions")
+            st.error("This usually means your account doesn't have access to this endpoint")
+        elif resp.status_code == 429:
+            st.warning("⚠️ Apollo API: Rate limited - Try again later")
+        else:
+            st.error(f"❌ Apollo API: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:500]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Apollo API: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Apollo API: Unexpected error - {str(e)}")
+
+def test_lusha_connection(api_key: str):
+    """Test Lusha API connection with a simple request"""
+    headers = {
+        "api_key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    # Test with a simple request using the bulk endpoint
+    test_payload = {
+        "contacts": [
+            {
+                "contactId": "1",
+                "fullName": "John Doe",
+                "email": "john@example.com",
+                "companies": [
+                    {
+                        "name": "Example Corp",
+                        "domain": "example.com",
+                        "isCurrent": True
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "revealEmails": True,
+            "revealPhones": True
+        }
+    }
+    
+    try:
+        st.info("Testing Lusha API connection...")
+        resp = requests.post(
+            "https://api.lusha.com/v2/person",
+            headers=headers,
+            json=test_payload,
+            timeout=30,
+        )
+        
+        st.info(f"Lusha API Test: Status code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success("✅ Lusha API connection successful!")
+            st.json(data)
+        elif resp.status_code == 401:
+            st.error("❌ Lusha API: Unauthorized - Check your API key")
+        elif resp.status_code == 403:
+            st.error("❌ Lusha API: Forbidden - Check your account permissions or plan")
+        elif resp.status_code == 429:
+            st.warning("⚠️ Lusha API: Rate limited - Try again later")
+        else:
+            st.error(f"❌ Lusha API: Error {resp.status_code}")
+            if resp.content:
+                try:
+                    error_data = resp.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Error response: {resp.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Lusha API: Network error - {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Lusha API: Unexpected error - {str(e)}")
+
+# ---------------------------
 # Enrichment stubs (APIs only)
 # ---------------------------
 
@@ -451,9 +1028,12 @@ def enrich_with_zoominfo(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
 # - By default, personal emails/phones are not returned (we do not request phones)
 # - Consumes credits; bulk per-minute rate ≈ 50% of single endpoint
 
-def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_personal_emails: bool = False) -> pd.DataFrame:
+def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_personal_emails: bool = False, max_contacts: int = 50) -> pd.DataFrame:
     if not api_key or df.empty:
+        st.warning("Apollo API: No API key provided or empty dataframe")
         return df
+    
+    st.info("🚀 Apollo API: Starting bulk email enrichment...")
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -463,7 +1043,15 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
     # work on rows missing email
     need_idx = df.index[df["email"].isna() | (df["email"].astype(str).str.strip() == "")].tolist()
     if not need_idx:
+        st.info("Apollo API: No rows need email enrichment (all have emails)")
         return df
+
+    # Limit the number of contacts to process
+    if len(need_idx) > max_contacts:
+        st.info(f"Apollo API: Limiting enrichment to first {max_contacts} contacts (out of {len(need_idx)} total)")
+        need_idx = need_idx[:max_contacts]
+    else:
+        st.info(f"Apollo API: Found {len(need_idx)} rows needing email enrichment")
 
     # Build payloads in batches of 10
     BATCH = 10
@@ -472,6 +1060,7 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
     phase = st.empty()
     bar = st.progress(0, text="Apollo bulk enrichment starting…")
     total_batches = (len(need_idx) + BATCH - 1) // BATCH
+    
     for bi, start in enumerate(range(0, len(need_idx), BATCH), start=1):
         batch_idx = need_idx[start:start+BATCH]
         details = []
@@ -506,6 +1095,8 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
             "reveal_personal_emails": bool(reveal_personal_emails),
             # You can also pass "reveal_phone_number": False (default)
         }
+        
+        st.info(f"Apollo API: Making request for batch {bi}/{total_batches} with {len(details)} people")
         try:
             resp = requests.post(
                 "https://api.apollo.io/api/v1/people/bulk_match",
@@ -513,7 +1104,11 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
                 json=payload,
                 timeout=30,
             )
+            
+            st.info(f"Apollo API: Response status code: {resp.status_code}")
+            
             if resp.status_code == 429:
+                st.warning("Apollo API: Rate limited, retrying after delay...")
                 # simple backoff and retry once
                 time.sleep(2.0)
                 resp = requests.post(
@@ -522,17 +1117,30 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
                     json=payload,
                     timeout=30,
                 )
+                st.info(f"Apollo API: Retry response status code: {resp.status_code}")
+            
             resp.raise_for_status()
             data = resp.json() if resp.content else {}
-            # Response shape may include matches under a field like "matches" or "people".
-            # We try common keys defensively:
-            results = None
-            for key in ["matches", "people", "enrichments", "data"]:
-                if isinstance(data.get(key), list):
-                    results = data[key]
-                    break
-            if not isinstance(results, list):
-                results = []
+            
+            st.info(f"Apollo API: Response data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            
+            # Based on Apollo API docs, the response should contain the enriched data directly
+            # The response format should be an array of enriched person objects
+            results = data if isinstance(data, list) else []
+            
+            # If it's not a list, try to find the data in common response fields
+            if not results and isinstance(data, dict):
+                for key in ["matches", "people", "enrichments", "data", "results"]:
+                    if isinstance(data.get(key), list):
+                        results = data[key]
+                        st.info(f"Apollo API: Found results under key '{key}' with {len(results)} items")
+                        break
+            
+            if not results:
+                st.warning("Apollo API: No results found in response")
+                st.info(f"Apollo API: Full response: {data}")
+            else:
+                st.info(f"Apollo API: Processing {len(results)} results")
 
             # Map each returned item to the corresponding row by order
             for i, item in enumerate(results):
@@ -544,15 +1152,25 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
                     item.get("email") or
                     item.get("work_email") or
                     item.get("professional_email") or
+                    item.get("primary_email") or
+                    item.get("contact_email") or
                     (item.get("emails")[0] if isinstance(item.get("emails"), list) and item["emails"] else None) or
                     None
                 )
+                
+                # Log the item structure for debugging
+                st.info(f"Apollo API: Item {i} keys: {list(item.keys()) if isinstance(item, dict) else 'Not a dict'}")
                 if email and str(email).strip():
                     df.at[ridx, "email"] = str(email).strip()
                     enriched_ct += 1
+                    st.info(f"Apollo API: Found email for row {ridx}: {email}")
+                    
+        except requests.exceptions.RequestException as e:
+            st.error(f"Apollo API: Request failed for batch {bi}: {str(e)}")
+            continue
         except Exception as e:
-            # continue to next batch on any error
-            pass
+            st.error(f"Apollo API: Unexpected error for batch {bi}: {str(e)}")
+            continue
 
         pct = int(100 * bi / max(1, total_batches))
         bar.progress(min(pct, 100), text=f"Apollo enrichment: batch {bi}/{total_batches}")
@@ -565,15 +1183,235 @@ def enrich_emails_with_apollo_bulk(df: pd.DataFrame, api_key: str, reveal_person
     bar.progress(100, text="Apollo enrichment done")
     return df
 
+def enrich_contacts_with_lusha_bulk(df: pd.DataFrame, api_key: str, reveal_emails: bool = True, reveal_phones: bool = True, max_contacts: int = 100) -> pd.DataFrame:
+    """
+    Enrich contacts using Lusha's bulk person enrichment API.
+    Supports up to 100 contacts per request.
+    """
+    if not api_key or df.empty:
+        st.warning("Lusha API: No API key provided or empty dataframe")
+        return df
+    
+    st.info("🚀 Lusha API: Starting bulk contact enrichment...")
+    headers = {
+        "api_key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    
+    df = df.copy()
+    
+    # Work on all rows to enrich missing data, but limit to max_contacts
+    need_idx = df.index.tolist()
+    if not need_idx:
+        st.info("Lusha API: No rows to enrich")
+        return df
+
+    # Limit the number of contacts to process
+    if len(need_idx) > max_contacts:
+        st.info(f"Lusha API: Limiting enrichment to first {max_contacts} contacts (out of {len(need_idx)} total)")
+        need_idx = need_idx[:max_contacts]
+    else:
+        st.info(f"Lusha API: Found {len(need_idx)} rows to enrich")
+
+    # Build payloads in batches of 100 (Lusha's limit)
+    BATCH = 100
+    enriched_ct = 0
+    skipped_ct = 0
+    phase = st.empty()
+    bar = st.progress(0, text="Lusha bulk enrichment starting…")
+    total_batches = (len(need_idx) + BATCH - 1) // BATCH
+    
+    for bi, start in enumerate(range(0, len(need_idx), BATCH), start=1):
+        batch_idx = need_idx[start:start+BATCH]
+        contacts = []
+        row_map = []  # keep mapping to write results back
+        
+        for ridx in batch_idx:
+            r = df.loc[ridx]
+            
+            # Build contact data - Lusha requires either LinkedIn URL, email, or firstName+lastName+(companyName OR companyDomain)
+            contact_data = {"contactId": str(ridx)}
+            
+            # Try to get full name
+            full_name = (str(r.get("first_name") or "").strip() + " " + str(r.get("last_name") or "").strip()).strip()
+            if not full_name and "name" in df.columns:
+                full_name = str(r.get("name") or "").strip()
+            
+            # Add available data
+            if full_name:
+                contact_data["fullName"] = full_name
+            
+            email = str(r.get("email") or "").strip()
+            if email:
+                contact_data["email"] = email
+            
+            linkedin_url = str(r.get("linkedin_url") or "").strip()
+            if linkedin_url:
+                contact_data["linkedinUrl"] = linkedin_url
+            
+            company = str(r.get("company") or "").strip()
+            if company:
+                # Try to extract domain from company name or use a placeholder
+                company_domain = company.lower().replace(" ", "").replace(".", "") + ".com"
+                contact_data["companies"] = [{
+                    "name": company,
+                    "domain": company_domain,
+                    "isCurrent": True
+                }]
+            
+            # Skip if we don't have enough data for Lusha's requirements
+            if not (contact_data.get("linkedinUrl") or contact_data.get("email") or 
+                   (contact_data.get("fullName") and contact_data.get("companies"))):
+                skipped_ct += 1
+                continue
+                
+            contacts.append(contact_data)
+            row_map.append(ridx)
+        
+        if not contacts:
+            continue
+
+        payload = {
+            "contacts": contacts,
+            "metadata": {
+                "revealEmails": reveal_emails,
+                "revealPhones": reveal_phones,
+                "partialProfile": True  # Allow partial matches
+            }
+        }
+        
+        st.info(f"Lusha API: Making request for batch {bi}/{total_batches} with {len(contacts)} contacts")
+        try:
+            resp = requests.post(
+                "https://api.lusha.com/v2/person",
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            
+            st.info(f"Lusha API: Response status code: {resp.status_code}")
+            
+            if resp.status_code == 429:
+                st.warning("Lusha API: Rate limited, retrying after delay...")
+                time.sleep(2.0)
+                resp = requests.post(
+                    "https://api.lusha.com/v2/person",
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                )
+                st.info(f"Lusha API: Retry response status code: {resp.status_code}")
+            
+            resp.raise_for_status()
+            data = resp.json() if resp.content else {}
+            
+            st.info(f"Lusha API: Response data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            
+            # Process the response - Lusha returns contacts and companies separately
+            contacts_data = data.get("contacts", {})
+            companies_data = data.get("companies", {})
+            
+            if not contacts_data:
+                st.warning("Lusha API: No contact data found in response")
+                continue
+            
+            # Map each returned contact to the corresponding row
+            for contact_id, contact_info in contacts_data.items():
+                if contact_info.get("error"):
+                    st.warning(f"Lusha API: Error for contact {contact_id}: {contact_info['error']}")
+                    continue
+                
+                contact_data = contact_info.get("data", {})
+                if not contact_data:
+                    continue
+                
+                # Find the corresponding row index
+                try:
+                    ridx = int(contact_id)
+                    if ridx not in row_map:
+                        continue
+                except ValueError:
+                    continue
+                
+                # Extract and update data
+                # Email
+                email = (contact_data.get("email") or 
+                        contact_data.get("workEmail") or 
+                        contact_data.get("personalEmail") or
+                        None)
+                if email and str(email).strip():
+                    df.at[ridx, "email"] = str(email).strip()
+                    enriched_ct += 1
+                
+                # Phone
+                phone = (contact_data.get("phone") or 
+                        contact_data.get("workPhone") or 
+                        contact_data.get("personalPhone") or
+                        None)
+                if phone and str(phone).strip():
+                    df.at[ridx, "phone"] = str(phone).strip()
+                
+                # LinkedIn URL
+                linkedin = contact_data.get("linkedinUrl")
+                if linkedin and str(linkedin).strip():
+                    df.at[ridx, "linkedin_url"] = str(linkedin).strip()
+                
+                # Title/Job Title
+                title = contact_data.get("title") or contact_data.get("jobTitle")
+                if title and str(title).strip():
+                    df.at[ridx, "title"] = str(title).strip()
+                
+                # Company information
+                company_id = contact_data.get("companyId")
+                if company_id and company_id in companies_data:
+                    company_info = companies_data[company_id].get("data", {})
+                    if company_info:
+                        company_name = company_info.get("name")
+                        if company_name and str(company_name).strip():
+                            df.at[ridx, "company"] = str(company_name).strip()
+                        
+                        # Add company domain if available
+                        company_domain = company_info.get("domain")
+                        if company_domain and str(company_domain).strip():
+                            df.at[ridx, "company_domain"] = str(company_domain).strip()
+                
+                # Location
+                location = contact_data.get("location")
+                if location and str(location).strip():
+                    df.at[ridx, "location"] = str(location).strip()
+                
+                st.info(f"Lusha API: Enriched contact {ridx}")
+                    
+        except requests.exceptions.RequestException as e:
+            st.error(f"Lusha API: Request failed for batch {bi}: {str(e)}")
+            continue
+        except Exception as e:
+            st.error(f"Lusha API: Unexpected error for batch {bi}: {str(e)}")
+            continue
+
+        pct = int(100 * bi / max(1, total_batches))
+        bar.progress(min(pct, 100), text=f"Lusha enrichment: batch {bi}/{total_batches}")
+        phase.markdown(f"Enriched contacts so far: **{enriched_ct}** · skipped (insufficient data): **{skipped_ct}**")
+
+        # Polite pacing to respect rate limits
+        time.sleep(0.5)
+
+    phase.markdown(f"**Lusha bulk enrichment complete.** New data enriched: **{enriched_ct}** · Skipped: **{skipped_ct}**")
+    bar.progress(100, text="Lusha enrichment done")
+    return df
+
 def fetch_recent_mentions(name: str, company: str, newsapi_key: str, lookback_days: int = 30) -> List[str]:
     """Use NewsAPI (or similar) to find recent public mentions of a person/company."""
     if not newsapi_key:
+        st.warning("NewsAPI: No API key provided")
         return []
 
     q_parts = []
     if name: q_parts.append(f"\"{name}\"")
     if company: q_parts.append(f"\"{company}\"")
     if not q_parts:
+        st.warning("NewsAPI: No name or company provided for search")
         return []
 
     q = " AND ".join(q_parts)
@@ -588,22 +1426,47 @@ def fetch_recent_mentions(name: str, company: str, newsapi_key: str, lookback_da
         "apiKey": newsapi_key
     }
     url = f"https://newsapi.org/v2/everything?{urlencode(params)}"
+    
+    st.info(f"NewsAPI: Searching for '{q}' from {from_date}")
+    st.info(f"NewsAPI: Request URL: {url}")
+    
     try:
         r = requests.get(url, timeout=15)
+        st.info(f"NewsAPI: Response status code: {r.status_code}")
+        
         if r.status_code == 200:
             data = r.json()
+            st.info(f"NewsAPI: Response data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            
             articles = data.get("articles", [])
+            st.info(f"NewsAPI: Found {len(articles)} articles")
+            
             out = []
-            for a in articles:
+            for i, a in enumerate(articles):
                 title = safe_get(a, "title", default="")
                 source = safe_get(a, "source", "name", default="")
                 link = safe_get(a, "url", default="")
                 published = safe_get(a, "publishedAt", default="")
                 if title and link:
                     out.append(f"{title} — {source} ({published}) | {link}")
+                    st.info(f"NewsAPI: Article {i+1}: {title[:50]}...")
+            
+            st.info(f"NewsAPI: Returning {len(out)} valid articles")
             return out
-    except Exception:
-        pass
+        else:
+            st.error(f"NewsAPI: Request failed with status {r.status_code}")
+            if r.content:
+                try:
+                    error_data = r.json()
+                    st.error(f"NewsAPI: Error response: {error_data}")
+                except:
+                    st.error(f"NewsAPI: Error response (raw): {r.text[:200]}")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"NewsAPI: Request failed: {str(e)}")
+    except Exception as e:
+        st.error(f"NewsAPI: Unexpected error: {str(e)}")
+    
     return []
 
 def fetch_utility_dive(company: str, lookback_days: int = 60) -> List[str]:
@@ -1063,6 +1926,14 @@ with colD:
     apollo_personal = st.checkbox("Allow personal emails (Apollo)", value=False,
                                   help="If enabled, sets reveal_personal_emails=true.")
 
+colE, colF = st.columns(2)
+with colE:
+    do_lusha = st.checkbox("Lusha: Bulk Contact Enrichment (comprehensive data)", value=False,
+                           help="Enriches emails, phones, titles, companies, LinkedIn URLs. Supports up to 100 contacts per batch.")
+with colF:
+    lusha_reveal_phones = st.checkbox("Reveal phone numbers (Lusha)", value=True,
+                                      help="If enabled, includes phone numbers in enrichment (requires Unified Credits plan).")
+
 # Enrichment section with completion tracking
 enrichment_complete = st.session_state.get("enrichment_complete", False)
 
@@ -1118,7 +1989,7 @@ if st.button("Run Enrichment", disabled=enrichment_complete):
                 with st.spinner("Enriching emails via Apollo bulk…"):
                     try:
                         df_before = df.copy()
-                        df = enrich_emails_with_apollo_bulk(df, APOLLO_API_KEY, reveal_personal_emails=apollo_personal)
+                        df = enrich_emails_with_apollo_bulk(df, APOLLO_API_KEY, reveal_personal_emails=apollo_personal, max_contacts=APOLLO_MAX_CONTACTS)
                         
                         # Check if any emails were actually enriched
                         emails_before = df_before["email"].notna().sum()
@@ -1150,6 +2021,52 @@ if st.button("Run Enrichment", disabled=enrichment_complete):
                         - **403 Forbidden**: Account suspended or insufficient credits
                         - **400 Bad Request**: Invalid request format or missing required fields
                         - **Network timeout**: Apollo servers may be slow, try smaller batches
+                        """)
+
+        if do_lusha:
+            if not LUSHA_API_KEY:
+                st.error("Lusha API Key missing.")
+                enrichment_errors.append("Lusha: Missing API key")
+            else:
+                with st.spinner("Enriching contacts via Lusha bulk…"):
+                    try:
+                        df_before = df.copy()
+                        df = enrich_contacts_with_lusha_bulk(df, LUSHA_API_KEY, reveal_emails=True, reveal_phones=lusha_reveal_phones, max_contacts=LUSHA_MAX_CONTACTS)
+                        
+                        # Check if any data was actually enriched
+                        emails_before = df_before["email"].notna().sum()
+                        emails_after = df["email"].notna().sum()
+                        new_emails = emails_after - emails_before
+                        
+                        phones_before = df_before.get("phone", pd.Series()).notna().sum()
+                        phones_after = df.get("phone", pd.Series()).notna().sum()
+                        new_phones = phones_after - phones_before
+                        
+                        if new_emails > 0 or new_phones > 0:
+                            enrichment_success.append(f"Lusha: {new_emails} new emails, {new_phones} new phones found")
+                            st.success(f"Lusha contact enrichment completed. Found {new_emails} new emails and {new_phones} new phone numbers.")
+                        else:
+                            st.warning("Lusha enrichment completed but no new data was found.")
+                            st.info("**Possible reasons for no results:**")
+                            st.markdown("""
+                            - **Insufficient data**: Lusha needs at least LinkedIn URL, email, or name+company for matching
+                            - **No matches found**: The contacts may not be in Lusha's database
+                            - **API rate limits**: Try again in a few minutes
+                            - **Invalid API key**: Check your Lusha API key is correct and active
+                            - **Account limits**: Your Lusha plan may have reached its limits
+                            - **Plan restrictions**: Phone numbers require Unified Credits plan
+                            """)
+                            enrichment_errors.append("Lusha: No new data found")
+                    except Exception as e:
+                        st.error(f"Lusha enrichment failed: {str(e)}")
+                        enrichment_errors.append(f"Lusha: {str(e)}")
+                        st.info("**Common Lusha API issues:**")
+                        st.markdown("""
+                        - **401 Unauthorized**: Invalid or expired API key
+                        - **429 Too Many Requests**: Rate limit exceeded, wait and retry
+                        - **403 Forbidden**: Account suspended, insufficient credits, or plan restrictions
+                        - **400 Bad Request**: Invalid request format or missing required fields
+                        - **Network timeout**: Lusha servers may be slow, try smaller batches
                         """)
 
         # Store results and mark enrichment as complete
@@ -1221,7 +2138,7 @@ with st.expander("Optional: generate per-contact email drafts"):
         DRAFT_BATCH = 10
 
 # Check if enrichment is required but not complete
-enrichment_required = do_zoominfo or do_news_mentions or do_apollo
+enrichment_required = do_zoominfo or do_news_mentions or do_apollo or do_lusha
 can_proceed = not enrichment_required or enrichment_complete
 
 if not can_proceed:
@@ -1267,6 +2184,10 @@ if st.button("Rank & Export", disabled=not can_proceed):
             else:
                 cols = ["first_name","last_name","company","title","email","linkedin_url","recent_mentions",
                         "llm_role","score","base_score"]
+                # Add Lusha-specific columns if they exist
+                for lusha_col in ["phone", "location", "company_domain"]:
+                    if lusha_col in ranked.columns:
+                        cols.append(lusha_col)
                 if "email_draft" in ranked.columns:
                     cols.append("email_draft")
                 for c in cols:
