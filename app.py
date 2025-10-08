@@ -326,8 +326,16 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Local LLM (free via Ollama)")
-    USE_OLLAMA = st.checkbox("Use local LLM for intent & role classification", value=True,
-                             help="Requires Ollama running at http://localhost:11434")
+    
+    # Auto-detect if running in cloud environment (like AWS Amplify)
+    is_cloud_env = os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('AMPLIFY_APP_ID') or os.environ.get('VERCEL') or os.environ.get('HEROKU_APP_NAME')
+    
+    if is_cloud_env:
+        st.info("🌐 **Cloud Environment Detected** - Ollama is not available in cloud deployments. Use cloud AI services instead.")
+        USE_OLLAMA = False
+    else:
+        USE_OLLAMA = st.checkbox("Use local LLM for intent & role classification", value=False,
+                                 help="Requires Ollama running at http://localhost:11434")
     
     # Get available models from Ollama
     try:
