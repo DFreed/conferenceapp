@@ -327,20 +327,19 @@ with st.sidebar:
     st.divider()
     st.subheader("Local LLM (free via Ollama)")
     
-    # Auto-detect if running in cloud environment (like AWS Amplify)
-    is_cloud_env = os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('AMPLIFY_APP_ID') or os.environ.get('VERCEL') or os.environ.get('HEROKU_APP_NAME')
+    # Check if we have a custom Ollama URL (for cloud deployments)
+    OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
     
-    if is_cloud_env:
-        st.info("🌐 **Cloud Environment Detected** - Ollama is not available in cloud deployments. Use cloud AI services instead.")
-        USE_OLLAMA = False
-    else:
-        USE_OLLAMA = st.checkbox("Use local LLM for intent & role classification", value=False,
-                                 help="Requires Ollama running at http://localhost:11434")
+    if OLLAMA_URL != 'http://localhost:11434':
+        st.info(f"🌐 **Using Remote Ollama Server**: {OLLAMA_URL}")
+    
+    USE_OLLAMA = st.checkbox("Use local LLM for intent & role classification", value=True,
+                             help=f"Requires Ollama running at {OLLAMA_URL}")
     
     # Get available models from Ollama
     try:
         import requests
-        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         if response.status_code == 200:
             models_data = response.json().get("models", [])
             available_models = [m.get("name") for m in models_data if m.get("name")]
@@ -381,7 +380,7 @@ with st.sidebar:
     if st.button("Test Ollama Connection"):
         try:
             import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=5)
+            response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
             if response.status_code == 200:
                 st.success("✅ Ollama is running and accessible!")
                 models = response.json().get("models", [])
@@ -591,8 +590,10 @@ def _ollama_chat(messages: List[Dict[str,str]], model: str, options: Dict[str,An
         print(f"DEBUG: Making request to Ollama with model: {model}")
         print(f"DEBUG: Prompt length: {len(prompt)}")
         
+        # Get Ollama URL from environment or use localhost
+        ollama_url = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
         r = requests.post(
-            "http://localhost:11434/api/generate",
+            f"{ollama_url}/api/generate",
             json={
                 "model": model,
                 "prompt": prompt,
